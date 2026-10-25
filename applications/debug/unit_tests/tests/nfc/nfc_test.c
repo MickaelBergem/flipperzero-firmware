@@ -242,6 +242,66 @@ MU_TEST(mf_classic_1k_ev1_file_test) {
     nfc_device_free(nfc_device);
 }
 
+static MfClassicSignatureStatus mf_classic_ev1_signature_status(
+    const uint8_t* uid,
+    size_t uid_len,
+    const uint8_t* signature,
+    bool signature_read) {
+    MfClassicData* data = mf_classic_alloc();
+    mf_classic_set_uid(data, uid, uid_len);
+    data->type = MfClassicType1kEv1;
+
+    memcpy(data->block[69].data, signature, MF_CLASSIC_BLOCK_SIZE);
+    memcpy(data->block[70].data, &signature[MF_CLASSIC_BLOCK_SIZE], MF_CLASSIC_BLOCK_SIZE);
+    mf_classic_set_block_read(data, 69, &data->block[69]);
+    if(signature_read) {
+        mf_classic_set_block_read(data, 70, &data->block[70]);
+    }
+
+    MfClassicSignatureStatus status = mf_classic_get_signature_status(data);
+    mf_classic_free(data);
+
+    return status;
+}
+
+MU_TEST(mf_classic_ev1_signature_test) {
+    // Public samples from Proxmark3 tools/recover_pk.py
+    const uint8_t uid_4b[] = {0x52, 0x43, 0x74, 0xE2};
+    const uint8_t signature_4b[] = {
+        0xF8, 0x75, 0x8C, 0xE3, 0x0A, 0x58, 0x55, 0x3A, 0x99, 0x85, 0xC4,
+        0x58, 0xFB, 0x9C, 0x7D, 0x34, 0x0F, 0xCF, 0xB0, 0x48, 0x47, 0xB9,
+        0x28, 0xA0, 0x66, 0x79, 0x39, 0x27, 0x2B, 0xC5, 0x8B, 0x5E,
+    };
+    const uint8_t uid_7b[] = {0x04, 0x33, 0x61, 0x9A, 0xB3, 0x57, 0x80};
+    const uint8_t signature_7b[] = {
+        0xB9, 0xFA, 0xE3, 0x69, 0xEC, 0x21, 0xC9, 0x80, 0x65, 0x0D, 0x87,
+        0xED, 0x9A, 0xE9, 0xB1, 0x61, 0x0E, 0x85, 0x91, 0x31, 0xB4, 0xB8,
+        0x69, 0x9C, 0x64, 0x75, 0x48, 0xAB, 0x68, 0xD2, 0x49, 0xBB,
+    };
+
+    mu_assert(
+        mf_classic_ev1_signature_status(uid_4b, sizeof(uid_4b), signature_4b, true) ==
+            MfClassicSignatureStatusValid,
+        "4-byte UID signature not valid\r\n");
+    mu_assert(
+        mf_classic_ev1_signature_status(uid_7b, sizeof(uid_7b), signature_7b, true) ==
+            MfClassicSignatureStatusValid,
+        "7-byte UID signature not valid\r\n");
+
+    uint8_t tampered[sizeof(signature_4b)];
+    memcpy(tampered, signature_4b, sizeof(tampered));
+    tampered[sizeof(tampered) - 1] ^= 0x01;
+    mu_assert(
+        mf_classic_ev1_signature_status(uid_4b, sizeof(uid_4b), tampered, true) ==
+            MfClassicSignatureStatusInvalid,
+        "Tampered signature not invalid\r\n");
+
+    mu_assert(
+        mf_classic_ev1_signature_status(uid_4b, sizeof(uid_4b), signature_4b, false) ==
+            MfClassicSignatureStatusNotAvailable,
+        "Unread signature not reported as not available\r\n");
+}
+
 MU_TEST(iso14443_3a_reader) {
     Nfc* poller = nfc_alloc();
     Nfc* listener = nfc_alloc();
@@ -1221,6 +1281,7 @@ MU_TEST_SUITE(nfc) {
     MU_RUN_TEST(mf_classic_4k_4b_file_test);
     MU_RUN_TEST(mf_classic_4k_7b_file_test);
     MU_RUN_TEST(mf_classic_1k_ev1_file_test);
+    MU_RUN_TEST(mf_classic_ev1_signature_test);
 
     MU_RUN_TEST(mf_classic_reader);
     MU_RUN_TEST(mf_classic_ev1_sync_read);
