@@ -498,6 +498,62 @@ static void mf_classic_ev1_sync_read(void) {
     nfc_free(poller);
 }
 
+static void mf_classic_ev1_listener_hidden_sectors(void) {
+    Nfc* poller = nfc_alloc();
+    Nfc* listener = nfc_alloc();
+
+    NfcDevice* nfc_device = nfc_device_alloc();
+    nfc_data_generator_fill_data(NfcDataGeneratorTypeMfClassic1k_7b, nfc_device);
+    MfClassicData* ev1_data = mf_classic_alloc();
+    nfc_device_copy_data(nfc_device, NfcProtocolMfClassic, ev1_data);
+    ev1_data->type = MfClassicType1kEv1;
+
+    // Sector 16 content as an emulated dump would have it: keys known, everything else zero
+    mf_classic_set_key_found(ev1_data, 16, MfClassicKeyTypeA, 0x5C8FF9990DA2);
+    mf_classic_set_key_found(ev1_data, 16, MfClassicKeyTypeB, 0xD01AFEEB890A);
+    // Sector 17 as on a genuine card: data readable with key B
+    MfClassicSectorTrailer* sec_tr = mf_classic_get_sector_trailer_by_sector(ev1_data, 17);
+    const uint8_t access_bits[] = {0x70, 0xF0, 0xF8, 0x69};
+    memcpy(sec_tr->access_bits.data, access_bits, sizeof(access_bits));
+    mf_classic_set_key_found(ev1_data, 17, MfClassicKeyTypeA, 0x75CCB59C9BED);
+    mf_classic_set_key_found(ev1_data, 17, MfClassicKeyTypeB, 0x4B791BEA7BCC);
+    memset(ev1_data->block[69].data, 0x69, MF_CLASSIC_BLOCK_SIZE);
+
+    NfcListener* mfc_listener = nfc_listener_alloc(listener, NfcProtocolMfClassic, ev1_data);
+    nfc_listener_start(mfc_listener, NULL, NULL);
+
+    MfClassicKey key_16a = {.data = {0x5C, 0x8F, 0xF9, 0x99, 0x0D, 0xA2}};
+    MfClassicKey key_17b = {.data = {0x4B, 0x79, 0x1B, 0xEA, 0x7B, 0xCC}};
+    // Auth alone leaves the card authenticated, so it goes last
+    MfClassicBlock signature_block = {};
+    MfClassicError signature_error = mf_classic_poller_sync_read_block(
+        poller, 69, &key_17b, MfClassicKeyTypeB, &signature_block);
+    MfClassicBlock block = {};
+    MfClassicError read_error =
+        mf_classic_poller_sync_read_block(poller, 64, &key_16a, MfClassicKeyTypeA, &block);
+    MfClassicError write_error =
+        mf_classic_poller_sync_write_block(poller, 64, &key_16a, MfClassicKeyTypeA, &block);
+    MfClassicError auth_error =
+        mf_classic_poller_sync_auth(poller, 64, &key_16a, MfClassicKeyTypeA, NULL);
+
+    nfc_listener_stop(mfc_listener);
+    nfc_listener_free(mfc_listener);
+
+    // A genuine card authenticates sector 16 but refuses every memory operation on it
+    mu_assert(auth_error == MfClassicErrorNone, "EV1 sector 16 auth failed\r\n");
+    mu_assert(read_error != MfClassicErrorNone, "EV1 sector 16 read not refused\r\n");
+    mu_assert(write_error != MfClassicErrorNone, "EV1 sector 16 write not refused\r\n");
+    mu_assert(signature_error == MfClassicErrorNone, "EV1 sector 17 read failed\r\n");
+    mu_assert(
+        memcmp(&signature_block, &ev1_data->block[69], sizeof(MfClassicBlock)) == 0,
+        "EV1 sector 17 data mismatch\r\n");
+
+    mf_classic_free(ev1_data);
+    nfc_device_free(nfc_device);
+    nfc_free(listener);
+    nfc_free(poller);
+}
+
 static void mf_classic_write(void) {
     Nfc* poller = nfc_alloc();
     Nfc* listener = nfc_alloc();
@@ -1138,6 +1194,7 @@ MU_TEST_SUITE(nfc) {
 
     MU_RUN_TEST(mf_classic_reader);
     MU_RUN_TEST(mf_classic_ev1_sync_read);
+    MU_RUN_TEST(mf_classic_ev1_listener_hidden_sectors);
     MU_RUN_TEST(mf_classic_write);
     MU_RUN_TEST(mf_classic_value_block);
     MU_RUN_TEST(mf_classic_send_frame_test);
