@@ -15,6 +15,7 @@ enum {
     SubmenuIndexDictAttack,
     SubmenuIndexCrackNonces,
     SubmenuIndexUpdate,
+    SubmenuIndexCheckSignature,
 };
 
 static void nfc_scene_info_on_enter_mf_classic(NfcApp* instance) {
@@ -139,6 +140,15 @@ static void nfc_scene_read_menu_on_enter_mf_classic(NfcApp* instance) {
             nfc_protocol_support_common_submenu_callback,
             instance);
     }
+
+    if(data->type == MfClassicType1kEv1) {
+        submenu_add_item(
+            submenu,
+            "Check Originality",
+            SubmenuIndexCheckSignature,
+            nfc_protocol_support_common_submenu_callback,
+            instance);
+    }
 }
 
 static void nfc_scene_read_success_on_enter_mf_classic(NfcApp* instance) { //-V524
@@ -186,6 +196,15 @@ static void nfc_scene_saved_menu_on_enter_mf_classic(NfcApp* instance) {
         SubmenuIndexUpdate,
         nfc_protocol_support_common_submenu_callback,
         instance);
+
+    if(data->type == MfClassicType1kEv1) {
+        submenu_add_item(
+            submenu,
+            "Check Originality",
+            SubmenuIndexCheckSignature,
+            nfc_protocol_support_common_submenu_callback,
+            instance);
+    }
 }
 
 static void nfc_scene_emulate_on_enter_mf_classic(NfcApp* instance) {
@@ -218,6 +237,9 @@ static bool nfc_scene_read_menu_on_event_mf_classic(NfcApp* instance, SceneManag
                 instance->scene_manager, NfcSceneSaveConfirm, NfcSceneSaveConfirmStateCrackNonces);
             scene_manager_next_scene(instance->scene_manager, NfcSceneSaveConfirm);
             consumed = true;
+        } else if(event.event == SubmenuIndexCheckSignature) {
+            scene_manager_next_scene(instance->scene_manager, NfcSceneMfClassicCheckSignature);
+            consumed = true;
         }
     }
 
@@ -239,6 +261,9 @@ static bool nfc_scene_saved_menu_on_event_mf_classic(NfcApp* instance, SceneMana
             consumed = true;
         } else if(event.event == SubmenuIndexUpdate) {
             scene_manager_next_scene(instance->scene_manager, NfcSceneMfClassicUpdateInitial);
+            consumed = true;
+        } else if(event.event == SubmenuIndexCheckSignature) {
+            scene_manager_next_scene(instance->scene_manager, NfcSceneMfClassicCheckSignature);
             consumed = true;
         }
     }
