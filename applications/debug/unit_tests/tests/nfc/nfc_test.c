@@ -15,6 +15,8 @@
 #include <nfc/protocols/felica/felica.h>
 #include <nfc/protocols/felica/felica_poller_sync.h>
 #include <nfc/protocols/mf_classic/mf_classic_poller.h>
+#include <nfc/protocols/mf_classic/mf_classic_trace.h>
+#include <toolbox/stream/file_stream.h>
 #include <nfc/protocols/iso15693_3/iso15693_3_poller.h>
 #include <nfc/protocols/slix/slix.h>
 #include <nfc/protocols/slix/slix_i.h>
@@ -639,6 +641,60 @@ static void mf_classic_listener_readable_key_b(void) {
     mu_assert(key_a_error == MfClassicErrorNone, "Read with key A failed\r\n");
     mu_assert(key_b_error != MfClassicErrorNone, "Read with readable key B not refused\r\n");
 
+    nfc_device_free(nfc_device);
+    nfc_free(listener);
+    nfc_free(poller);
+}
+
+static void mf_classic_emulation_trace(void) {
+    Nfc* poller = nfc_alloc();
+    Nfc* listener = nfc_alloc();
+
+    NfcDevice* nfc_device = nfc_device_alloc();
+    nfc_data_generator_fill_data(NfcDataGeneratorTypeMfClassic1k_7b, nfc_device);
+    const MfClassicData* card = nfc_device_get_data(nfc_device, NfcProtocolMfClassic);
+
+    mu_assert(mf_classic_trace_start(512) > 0, "mf_classic_trace_start() failed\r\n");
+    NfcListener* mfc_listener = nfc_listener_alloc(listener, NfcProtocolMfClassic, card);
+    nfc_listener_start(mfc_listener, NULL, NULL);
+
+    // A full read sends far more frames than one buffer chunk holds
+    MfClassicDeviceKeys keys = {};
+    for(size_t i = 0; i < mf_classic_get_total_sectors_num(MfClassicType1k); i++) {
+        memset(keys.key_a[i].data, 0xFF, sizeof(MfClassicKey));
+        FURI_BIT_SET(keys.key_a_mask, i);
+    }
+    MfClassicData* data = mf_classic_alloc();
+    data->type = MfClassicType1k;
+    mf_classic_poller_sync_read(poller, &keys, data);
+
+    nfc_listener_stop(mfc_listener);
+    nfc_listener_free(mfc_listener);
+
+    mu_assert(
+        mf_classic_trace_save(NFC_TEST_NFC_DEV_PATH, card), "mf_classic_trace_save() failed\r\n");
+    mf_classic_trace_stop();
+
+    size_t reads = 0;
+    bool full = false;
+    Stream* stream = file_stream_alloc(nfc_test->storage);
+    FuriString* line = furi_string_alloc();
+    mu_assert(
+        file_stream_open(stream, NFC_TEST_NFC_DEV_PATH, FSAM_READ, FSOM_OPEN_EXISTING),
+        "Trace file not found\r\n");
+    while(stream_read_line(stream, line)) {
+        if(furi_string_search_str(line, "READ block") != FURI_STRING_FAILURE) reads++;
+        if(furi_string_search_str(line, "buffer full:") != FURI_STRING_FAILURE) full = true;
+    }
+    furi_string_free(line);
+    file_stream_close(stream);
+    stream_free(stream);
+    storage_simply_remove(nfc_test->storage, NFC_TEST_NFC_DEV_PATH);
+
+    mu_assert(reads >= 64, "Not every READ of the 64 blocks was traced\r\n");
+    mu_assert(!full, "Trace buffer did not grow\r\n");
+
+    mf_classic_free(data);
     nfc_device_free(nfc_device);
     nfc_free(listener);
     nfc_free(poller);
@@ -1285,6 +1341,7 @@ MU_TEST_SUITE(nfc) {
 
     MU_RUN_TEST(mf_classic_reader);
     MU_RUN_TEST(mf_classic_ev1_sync_read);
+    MU_RUN_TEST(mf_classic_emulation_trace);
     MU_RUN_TEST(mf_classic_ev1_listener_hidden_sectors);
     MU_RUN_TEST(mf_classic_listener_readable_key_b);
     MU_RUN_TEST(mf_classic_write);

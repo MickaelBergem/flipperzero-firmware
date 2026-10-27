@@ -1,4 +1,5 @@
 #include "mf_classic_listener_i.h"
+#include "mf_classic_trace_i.h"
 
 #include <nfc/protocols/nfc_listener_base.h>
 
@@ -572,6 +573,23 @@ static void mf_classic_listener_send_short_frame(MfClassicListener* instance, ui
     iso14443_3a_listener_tx_with_custom_parity(instance->iso14443_3a_listener, tx_buffer);
 }
 
+static MfClassicTraceResult mf_classic_listener_trace_result(MfClassicListenerCommand command) {
+    switch(command) {
+    case MfClassicListenerCommandProcessed:
+        return MfClassicTraceResultAnswered;
+    case MfClassicListenerCommandAck:
+        return MfClassicTraceResultAck;
+    case MfClassicListenerCommandNack:
+        return MfClassicTraceResultNack;
+    case MfClassicListenerCommandSilent:
+        return MfClassicTraceResultSilent;
+    case MfClassicListenerCommandSleep:
+        return MfClassicTraceResultSleep;
+    default:
+        return MfClassicTraceResultNone;
+    }
+}
+
 NfcCommand mf_classic_listener_run(NfcGenericEvent event, void* context) {
     furi_assert(context);
     furi_assert(event.event_data);
@@ -583,13 +601,16 @@ NfcCommand mf_classic_listener_run(NfcGenericEvent event, void* context) {
     BitBuffer* rx_buffer_plain;
 
     if(iso3_event->type == Iso14443_3aListenerEventTypeFieldOff) {
+        mf_classic_trace_add(MfClassicTraceEventFieldOff, NULL, 0);
         mf_classic_listener_reset_state(instance);
         command = NfcCommandSleep;
     } else if(
         (iso3_event->type == Iso14443_3aListenerEventTypeReceivedData) ||
         (iso3_event->type == Iso14443_3aListenerEventTypeReceivedStandardFrame)) {
+        uint8_t trace_flags = instance->cmd_in_progress ? MF_CLASSIC_TRACE_FLAG_CONTINUATION : 0;
         if(instance->comm_state == MfClassicListenerCommStateEncrypted) {
             if(instance->state == MfClassicListenerStateAuthComplete) {
+                trace_flags |= MF_CLASSIC_TRACE_FLAG_DECRYPTED;
                 crypto1_decrypt(
                     instance->crypto, iso3_event->data->buffer, instance->rx_plain_buffer);
                 rx_buffer_plain = instance->rx_plain_buffer;
@@ -602,6 +623,10 @@ NfcCommand mf_classic_listener_run(NfcGenericEvent event, void* context) {
         } else {
             rx_buffer_plain = iso3_event->data->buffer;
         }
+
+        MfClassicTraceEntry* trace_entry =
+            mf_classic_trace_add(MfClassicTraceEventFrame, rx_buffer_plain, trace_flags);
+        bool cmd_supported = instance->cmd_in_progress;
 
         MfClassicListenerCommand mfc_command = MfClassicListenerCommandNack;
         if(instance->cmd_in_progress) {
@@ -620,11 +645,17 @@ NfcCommand mf_classic_listener_run(NfcGenericEvent event, void* context) {
                 }
                 instance->current_cmd_idx = i;
                 instance->current_cmd_handler_idx = 0;
+                cmd_supported = true;
                 mfc_command =
                     mf_classic_listener_cmd_handlers[i].handler[0](instance, rx_buffer_plain);
                 break;
             }
         }
+
+        mf_classic_trace_set_result(
+            trace_entry,
+            mf_classic_listener_trace_result(mfc_command),
+            cmd_supported ? 0 : MF_CLASSIC_TRACE_FLAG_UNSUPPORTED);
 
         if(mfc_command == MfClassicListenerCommandAck) {
             mf_classic_listener_send_short_frame(instance, MF_CLASSIC_CMD_ACK);
@@ -645,6 +676,7 @@ NfcCommand mf_classic_listener_run(NfcGenericEvent event, void* context) {
             command = NfcCommandSleep;
         }
     } else if(iso3_event->type == Iso14443_3aListenerEventTypeHalted) {
+        mf_classic_trace_add(MfClassicTraceEventHalted, NULL, 0);
         mf_classic_listener_reset_state(instance);
     }
 

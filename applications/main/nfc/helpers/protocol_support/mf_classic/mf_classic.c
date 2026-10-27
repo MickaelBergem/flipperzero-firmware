@@ -2,6 +2,7 @@
 #include "mf_classic_render.h"
 
 #include <nfc/protocols/mf_classic/mf_classic_poller.h>
+#include <nfc/protocols/mf_classic/mf_classic_trace.h>
 
 #include "nfc/nfc_app_i.h"
 
@@ -10,12 +11,16 @@
 
 #define TAG "MfClassicApp"
 
+#define NFC_MF_CLASSIC_TRACE_CAPACITY (512)
+#define NFC_MF_CLASSIC_TRACE_FOLDER   APP_DATA_PATH("traces")
+
 enum {
     SubmenuIndexDetectReader = SubmenuIndexCommonMax,
     SubmenuIndexDictAttack,
     SubmenuIndexCrackNonces,
     SubmenuIndexUpdate,
     SubmenuIndexCheckSignature,
+    SubmenuIndexEmulateTrace,
 };
 
 static void nfc_scene_info_on_enter_mf_classic(NfcApp* instance) {
@@ -118,6 +123,13 @@ static void nfc_scene_read_menu_on_enter_mf_classic(NfcApp* instance) {
     // Doesn't make sense to show "Write to Initial Card" right after reading
     submenu_remove_item(submenu, SubmenuIndexCommonWrite);
 
+    submenu_add_item(
+        submenu,
+        "Emulate-trace",
+        SubmenuIndexEmulateTrace,
+        nfc_protocol_support_common_submenu_callback,
+        instance);
+
     if(!mf_classic_is_card_read(data)) {
         submenu_add_item(
             submenu,
@@ -172,7 +184,19 @@ static void nfc_scene_saved_menu_on_enter_mf_classic(NfcApp* instance) {
     Submenu* submenu = instance->submenu;
     const MfClassicData* data = nfc_device_get_data(instance->nfc_device, NfcProtocolMfClassic);
 
-    submenu_change_item_label(submenu, SubmenuIndexCommonWrite, "Write to Initial Card");
+    submenu_remove_item(submenu, SubmenuIndexCommonWrite);
+    submenu_add_item(
+        submenu,
+        "Emulate-trace",
+        SubmenuIndexEmulateTrace,
+        nfc_protocol_support_common_submenu_callback,
+        instance);
+    submenu_add_item(
+        submenu,
+        "Write to Initial Card",
+        SubmenuIndexCommonWrite,
+        nfc_protocol_support_common_submenu_callback,
+        instance);
 
     if(!mf_classic_is_card_read(data)) {
         submenu_add_item(
@@ -210,7 +234,42 @@ static void nfc_scene_saved_menu_on_enter_mf_classic(NfcApp* instance) {
 static void nfc_scene_emulate_on_enter_mf_classic(NfcApp* instance) {
     const MfClassicData* data = nfc_device_get_data(instance->nfc_device, NfcProtocolMfClassic);
     instance->listener = nfc_listener_alloc(instance->nfc, NfcProtocolMfClassic, data);
+    // Allocated after the listener, so that it only takes what the emulation leaves free
+    if(instance->mfc_emulate_trace) {
+        size_t capacity = mf_classic_trace_start(NFC_MF_CLASSIC_TRACE_CAPACITY);
+        FURI_LOG_I(TAG, "Emulation trace started with room for %zu entries", capacity);
+    }
     nfc_listener_start(instance->listener, NULL, NULL);
+}
+
+void nfc_mf_classic_emulate_trace_finish(NfcApp* instance) {
+    if(!instance->mfc_emulate_trace) return;
+    instance->mfc_emulate_trace = false;
+
+    DateTime datetime;
+    furi_hal_rtc_get_datetime(&datetime);
+    FuriString* path = furi_string_alloc_printf(
+        "%s/%s_%04u%02u%02u_%02u%02u%02u.txt",
+        NFC_MF_CLASSIC_TRACE_FOLDER,
+        furi_string_empty(instance->file_name) ? "trace" :
+                                                 furi_string_get_cstr(instance->file_name),
+        datetime.year,
+        datetime.month,
+        datetime.day,
+        datetime.hour,
+        datetime.minute,
+        datetime.second);
+
+    storage_simply_mkdir(instance->storage, NFC_MF_CLASSIC_TRACE_FOLDER);
+    const MfClassicData* data = nfc_device_get_data(instance->nfc_device, NfcProtocolMfClassic);
+    if(mf_classic_trace_save(furi_string_get_cstr(path), data)) {
+        FURI_LOG_I(TAG, "Emulation trace saved to %s", furi_string_get_cstr(path));
+    } else {
+        FURI_LOG_E(TAG, "Failed to save emulation trace to %s", furi_string_get_cstr(path));
+    }
+    mf_classic_trace_stop();
+
+    furi_string_free(path);
 }
 
 static bool nfc_scene_read_menu_on_event_mf_classic(NfcApp* instance, SceneManagerEvent event) {
@@ -240,6 +299,11 @@ static bool nfc_scene_read_menu_on_event_mf_classic(NfcApp* instance, SceneManag
         } else if(event.event == SubmenuIndexCheckSignature) {
             scene_manager_next_scene(instance->scene_manager, NfcSceneMfClassicCheckSignature);
             consumed = true;
+        } else if(event.event == SubmenuIndexEmulateTrace) {
+            instance->mfc_emulate_trace = true;
+            dolphin_deed(DolphinDeedNfcEmulate);
+            scene_manager_next_scene(instance->scene_manager, NfcSceneEmulate);
+            consumed = true;
         }
     }
 
@@ -264,6 +328,11 @@ static bool nfc_scene_saved_menu_on_event_mf_classic(NfcApp* instance, SceneMana
             consumed = true;
         } else if(event.event == SubmenuIndexCheckSignature) {
             scene_manager_next_scene(instance->scene_manager, NfcSceneMfClassicCheckSignature);
+            consumed = true;
+        } else if(event.event == SubmenuIndexEmulateTrace) {
+            instance->mfc_emulate_trace = true;
+            dolphin_deed(DolphinDeedNfcEmulate);
+            scene_manager_next_scene(instance->scene_manager, NfcSceneEmulate);
             consumed = true;
         }
     }

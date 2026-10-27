@@ -165,6 +165,7 @@ struct NfcApp {
     Mfkey32Logger* mfkey32_logger;
     MfUserDict* mf_user_dict;
     MfClassicKeyCache* mfc_key_cache;
+    bool mfc_emulate_trace;
     NfcSupportedCards* nfc_supported_cards;
 
     NfcDevice* nfc_device;

@@ -52,6 +52,7 @@ env.Append(
         File("protocols/felica/felica_listener.h"),
         File("protocols/mf_ultralight/mf_ultralight_listener.h"),
         File("protocols/mf_classic/mf_classic_listener.h"),
+        File("protocols/mf_classic/mf_classic_trace.h"),
         File("protocols/slix/slix_listener.h"),
         File("protocols/type_4_tag/type_4_tag_listener.h"),
         # Sync API

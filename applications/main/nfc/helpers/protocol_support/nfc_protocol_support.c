@@ -11,6 +11,7 @@
 
 #include "nfc_protocol_support_defs.h"
 #include "nfc_protocol_support_gui_common.h"
+#include "mf_classic/mf_classic.h"
 
 /**
  * @brief Common scene entry handler.
@@ -693,6 +694,7 @@ static bool
 
 static void nfc_protocol_support_scene_emulate_stop_listener(NfcApp* instance) {
     nfc_listener_stop(instance->listener);
+    nfc_mf_classic_emulate_trace_finish(instance);
 
     const NfcProtocol protocol = nfc_device_get_protocol(instance->nfc_device);
 
