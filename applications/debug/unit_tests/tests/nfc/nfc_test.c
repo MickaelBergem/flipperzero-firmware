@@ -554,6 +554,36 @@ static void mf_classic_ev1_listener_hidden_sectors(void) {
     nfc_free(poller);
 }
 
+static void mf_classic_listener_readable_key_b(void) {
+    Nfc* poller = nfc_alloc();
+    Nfc* listener = nfc_alloc();
+
+    // Generated cards use the transport access bits FF 07 80, where key B is readable
+    NfcDevice* nfc_device = nfc_device_alloc();
+    nfc_data_generator_fill_data(NfcDataGeneratorTypeMfClassic1k_7b, nfc_device);
+    NfcListener* mfc_listener = nfc_listener_alloc(
+        listener, NfcProtocolMfClassic, nfc_device_get_data(nfc_device, NfcProtocolMfClassic));
+    nfc_listener_start(mfc_listener, NULL, NULL);
+
+    MfClassicKey key = {.data = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
+    MfClassicBlock block = {};
+    MfClassicError key_a_error =
+        mf_classic_poller_sync_read_block(poller, 1, &key, MfClassicKeyTypeA, &block);
+    MfClassicError key_b_error =
+        mf_classic_poller_sync_read_block(poller, 1, &key, MfClassicKeyTypeB, &block);
+
+    nfc_listener_stop(mfc_listener);
+    nfc_listener_free(mfc_listener);
+
+    // A readable key B cannot serve for authentication: memory access after it is refused
+    mu_assert(key_a_error == MfClassicErrorNone, "Read with key A failed\r\n");
+    mu_assert(key_b_error != MfClassicErrorNone, "Read with readable key B not refused\r\n");
+
+    nfc_device_free(nfc_device);
+    nfc_free(listener);
+    nfc_free(poller);
+}
+
 static void mf_classic_write(void) {
     Nfc* poller = nfc_alloc();
     Nfc* listener = nfc_alloc();
@@ -1195,6 +1225,7 @@ MU_TEST_SUITE(nfc) {
     MU_RUN_TEST(mf_classic_reader);
     MU_RUN_TEST(mf_classic_ev1_sync_read);
     MU_RUN_TEST(mf_classic_ev1_listener_hidden_sectors);
+    MU_RUN_TEST(mf_classic_listener_readable_key_b);
     MU_RUN_TEST(mf_classic_write);
     MU_RUN_TEST(mf_classic_value_block);
     MU_RUN_TEST(mf_classic_send_frame_test);

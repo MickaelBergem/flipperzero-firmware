@@ -190,9 +190,19 @@ static MfClassicListenerCommand
     return command;
 }
 
-// EV1 hidden sector 16 accepts authentication but answers every memory operation with a NAK
-static bool mf_classic_listener_is_sector_locked(MfClassicListener* instance, uint8_t sector_num) {
-    return instance->data->type == MfClassicType1kEv1 && sector_num == 16;
+// Memory operations a genuine card answers with a NAK even though the reader authenticated
+static bool
+    mf_classic_listener_is_access_refused(MfClassicListener* instance, uint8_t sector_num) {
+    // EV1 hidden sector 16 accepts authentication but refuses every memory operation
+    if(instance->data->type == MfClassicType1kEv1 && sector_num == 16) return true;
+
+    // A readable key B cannot serve for authentication (datasheet, table 8 note)
+    if(instance->auth_context.key_type != MfClassicKeyTypeB) return false;
+    return mf_classic_is_allowed_access(
+        instance->data,
+        mf_classic_get_sector_trailer_num_by_sector(sector_num),
+        MfClassicKeyTypeA,
+        MfClassicActionKeyBRead);
 }
 
 static MfClassicListenerCommand
@@ -207,7 +217,7 @@ static MfClassicListenerCommand
         uint8_t sector_num = mf_classic_get_sector_by_block(block_num);
         uint8_t auth_sector_num = mf_classic_get_sector_by_block(auth_ctx->block_num);
         if(sector_num != auth_sector_num) break;
-        if(mf_classic_listener_is_sector_locked(instance, sector_num)) break;
+        if(mf_classic_listener_is_access_refused(instance, sector_num)) break;
 
         MfClassicBlock access_block = instance->data->block[block_num];
 
@@ -259,7 +269,7 @@ static MfClassicListenerCommand mf_classic_listener_write_block_first_part_handl
         uint8_t sector_num = mf_classic_get_sector_by_block(block_num);
         uint8_t auth_sector_num = mf_classic_get_sector_by_block(auth_ctx->block_num);
         if(sector_num != auth_sector_num) break;
-        if(mf_classic_listener_is_sector_locked(instance, sector_num)) break;
+        if(mf_classic_listener_is_access_refused(instance, sector_num)) break;
 
         instance->write_block = block_num;
         instance->cmd_in_progress = true;
@@ -342,7 +352,7 @@ static MfClassicListenerCommand
         uint8_t sector_num = mf_classic_get_sector_by_block(block_num);
         uint8_t auth_sector_num = mf_classic_get_sector_by_block(auth_ctx->block_num);
         if(sector_num != auth_sector_num) break;
-        if(mf_classic_listener_is_sector_locked(instance, sector_num)) break;
+        if(mf_classic_listener_is_access_refused(instance, sector_num)) break;
 
         uint8_t cmd = bit_buffer_get_byte(buff, 0);
         MfClassicAction action = MfClassicActionDataDec;
